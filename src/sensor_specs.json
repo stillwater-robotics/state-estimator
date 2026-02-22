@@ -1,0 +1,51 @@
+{
+  "IMUs": {
+    "DFRobot MPU6050": {
+      "noise_density_ug_per_sqrtHz": 400,
+      "rate_hz": 25,
+      "cost": 18.43
+    },
+    "Sparkfun BMI270": {
+      "noise_density_ug_per_sqrtHz": 367,
+      "rate_hz": 25,
+      "cost": 26.43
+    },
+    "Sunfounder GY-521 MPU-6050": {
+      "noise_density_ug_per_sqrtHz": 700,
+      "rate_hz": 25,
+      "cost": 11.41
+    }
+  },
+  "GPS": {
+    "M5Stack Module GPS V2.0": {
+      "pos_noise_std": 1.5,
+      "cost": 19.93
+    },
+    "Waveshare LC76G Multi-GNSS Module": {
+      "pos_noise_std": 1.5,
+      "cost": 21.41
+    },
+    "Teseo-LIV3FL GNSS": {
+      "pos_noise_std": 1.5,
+      "cost": 23.860
+    }
+  },
+  "Pressure": {
+    "BlueRobotics Bar10 Depth/Pressure Sensor": {
+      "depth_noise_std": 0.16,
+      "cost": 57.14
+    },
+    "Phidgets Absolute Pressure Sensor": {
+      "depth_noise_std": 0.1725,
+      "cost": 42.86
+    },
+    "2SMPP-02": {
+      "depth_noise_std": 0.24,
+      "cost": 4.06
+    },
+    "MPXM2202GS": {
+      "depth_noise_std": 0.15,
+      "cost": 14.81
+    }
+  }
+}
