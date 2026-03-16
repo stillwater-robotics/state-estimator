@@ -1,5 +1,10 @@
-#include "state_estimator.h"
 #include <cmath>
+
+#ifdef ARDUINO
+#include "../state-estimator/include/state_estimator.h"
+#else
+#include "state_estimator.h"
+#endif
 
 using namespace Eigen;
 

@@ -1,7 +1,11 @@
+#ifdef ARDUINO
+#include <ArduinoEigenDense.h>
+#else 
+#include <Eigen/Dense>
+#endif
+
 #ifndef STATE_ESTIMATOR_H
 #define STATE_ESTIMATOR_H
-
-#include <Eigen/Dense>
 
 const float L_BASE = 0.5f; 
 const int HISTORY_SIZE = 50; 
