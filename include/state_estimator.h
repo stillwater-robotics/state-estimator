@@ -1,60 +1,220 @@
-#ifndef STATE_ESTIMATOR_H
-#define STATE_ESTIMATOR_H
+#ifndef STATE_ESTIMATOR_HEADER
+#define STATE_ESTIMATOR_HEADER
 
 #include <Eigen/Dense>
+#include <vector>
+#include <cmath>
+#include "controller.h"
 
-const float L_BASE = 0.5f; 
-const int HISTORY_SIZE = 50; 
-
-enum StateIdx {
-    IDX_X = 0,
-    IDX_Y = 1,
-    IDX_Z = 2,
-    IDX_THETA = 3,
-    IDX_VL = 4,
-    IDX_VR = 5,
-    IDX_VZ = 6,
-    STATE_DIM = 7
-};
-
-struct StateSnapshot { // This holds info for the RTS smoother
-    Eigen::Matrix<float, STATE_DIM, 1> x; // State
-    Eigen::Matrix<float, STATE_DIM, STATE_DIM> P; // Covariance
-    Eigen::Matrix<float, STATE_DIM, STATE_DIM> F; // Jacobian
-    bool hasGPS;
+// RTS smoother history storage
+struct HistoryNode {
+    Eigen::VectorXd x_pred;
+    Eigen::MatrixXd P_pred;
+    Eigen::VectorXd x_upd;
+    Eigen::MatrixXd P_upd;
+    Eigen::MatrixXd F;
 };
 
 class StateEstimator {
-public:
-    Eigen::Matrix<float, STATE_DIM, 1> x; 
-    Eigen::Matrix<float, STATE_DIM, STATE_DIM> P;
-
-    // Sensor noise
-    float std_gps = 1.5f;
-    float std_press = 0.2f;
-    float std_accel = 0.2f;
-
-    // History buffer for RTS Smoother
-    StateSnapshot history[HISTORY_SIZE];
-    int history_idx = 0;
-    bool buffer_full = false;
-
-public:
-    StateEstimator();
-
-    void Predict(float aL, float aR, float aZ, float dt);
+private:
+    State state;
+    Eigen::MatrixXd P;
+    Eigen::MatrixXd Q;
     
-    void UpdatePressure(float z_meas);
-    void UpdateGPS(float gps_x, float gps_y);
+    // Sensor Covariances
+    Eigen::MatrixXd R_gps;
+    Eigen::MatrixXd R_imu;
+    Eigen::MatrixXd R_pressure;
+    
+    float dt;
+    
+    std::vector<HistoryNode> history;
+    Eigen::VectorXd prev_updated_state_vec; // Needed for IMU velocity differential
 
-    void RunRTSSmoother();
+public:
+    StateEstimator(State initial_state = State(), float timestep = 0.1) 
+        : state(initial_state), dt(timestep) {
+        
+        P = Eigen::MatrixXd::Identity(8, 8) * 0.1;
+        Q = Eigen::MatrixXd::Identity(8, 8) * 0.01;
+        
+        // 1.5 m accuracy GPS
+        R_gps = Eigen::MatrixXd::Identity(2, 2) * 3.5; 
+        
+        // 0.5 m/s^2 accuracy IMU
+        R_imu = Eigen::MatrixXd::Identity(3, 3) * 0.25; 
+        
+        // 0.1 m accuracy Pressure Sensor
+        R_pressure = Eigen::MatrixXd::Identity(1, 1) * 0.01; 
+
+        prev_updated_state_vec = stateToVec(state);
+    }
+
+    /**
+     * @brief Prediction Step
+     */
+    void Predict(Input input) {
+        prev_updated_state_vec = stateToVec(state);
+
+        Eigen::MatrixXd F = calculateJacobian(state, input);
+        state = dynamics(state, input, dt);
+        P = F * P * F.transpose() + Q;
+
+        // RTS Smoother storage
+        HistoryNode node;
+        node.x_pred = stateToVec(state);
+        node.P_pred = P;
+        node.F = F;
+        node.x_upd = node.x_pred;
+        node.P_upd = node.P_pred;
+        history.push_back(node);
+    }
+
+    /**
+     * @brief GPS Update: X and Y. Triggers RTS Smoother if surfaced.
+     */
+    void UpdateGPS(double gps_x, double gps_y) {
+        if (state.pose.z > 0.5) return; 
+
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(2, 8);
+        H(0, 0) = 1.0; 
+        H(1, 1) = 1.0;
+
+        Eigen::VectorXd z_obs(2);
+        z_obs << gps_x, gps_y;
+
+        Eigen::VectorXd z_pred(2);
+        z_pred << state.pose.x, state.pose.y;
+
+        applyUpdate(z_obs, z_pred, H, R_gps);
+
+        // Surface GPS lock! Runs the RTS smoother to correct underwater drift
+        if (history.size() > 1) {
+            runRTSSmoother();
+        }
+    }
+
+    /**
+     * @brief IMU Update: XYZ Acceleration
+     * a = (v_k - v_k-1) / dt
+     */
+    void UpdateIMU(double ax, double ay, double az) {
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(3, 8);
+        H(0, 4) = 1.0 / dt; // d(ax)/d(vx)
+        H(1, 5) = 1.0 / dt; // d(ay)/d(vy)
+        H(2, 6) = 1.0 / dt; // d(az)/d(vz)
+
+        Eigen::VectorXd z_obs(3);
+        z_obs << ax, ay, az;
+
+        Eigen::VectorXd current_vec = stateToVec(state);
+        Eigen::VectorXd z_pred(3);
+        z_pred(0) = (current_vec(4) - prev_updated_state_vec(4)) / dt;
+        z_pred(1) = (current_vec(5) - prev_updated_state_vec(5)) / dt;
+        z_pred(2) = (current_vec(6) - prev_updated_state_vec(6)) / dt;
+
+        applyUpdate(z_obs, z_pred, H, R_imu);
+    }
+
+    /**
+     * @brief Pressure Sensor Update: Z depth
+     */
+    void UpdatePressure(double depth_z) {
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(1, 8);
+        H(0, 2) = 1.0;
+
+        Eigen::VectorXd z_obs(1);
+        z_obs << depth_z;
+
+        Eigen::VectorXd z_pred(1);
+        z_pred << state.pose.z;
+
+        applyUpdate(z_obs, z_pred, H, R_pressure);
+    }
+
+    State GetState() const { 
+        return state; 
+    }
+    
+    // Get RTS smoother corrected history
+    std::vector<Eigen::VectorXd> GetSmoothedTrajectory() const {
+        std::vector<Eigen::VectorXd> traj;
+        for(const auto& node : history) traj.push_back(node.x_upd);
+        return traj;
+    }
 
 private:
-    void saveToHistory(const Eigen::Matrix<float, STATE_DIM, STATE_DIM>& F_k);
 
-    // Ensure 16-byte alignment for Eigen fixed-size types if using on certain architectures
-    // (idk it breaks without this)
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    /**
+     * @brief Generalized Kalman Update to avoid code repetition
+     */
+    void applyUpdate(const Eigen::VectorXd& z_obs, const Eigen::VectorXd& z_pred, 
+                      const Eigen::MatrixXd& H, const Eigen::MatrixXd& R) {
+        
+        Eigen::VectorXd y = z_obs - z_pred;
+        
+        Eigen::MatrixXd S = H * P * H.transpose() + R;
+        Eigen::MatrixXd K = P * H.transpose() * S.inverse();
+
+        Eigen::VectorXd x_vec = stateToVec(state);
+        x_vec = x_vec + K * y;
+        
+        Eigen::MatrixXd I = Eigen::MatrixXd::Identity(8, 8);
+        P = (I - K * H) * P;
+
+        state = vecToState(x_vec);
+
+        if (!history.empty()) {
+            history.back().x_upd = x_vec;
+            history.back().P_upd = P;
+        }
+    }
+
+    /**
+     * @brief Rauch-Tung-Striebel (RTS) Backward Pass
+     */
+    void runRTSSmoother() {
+        int N = history.size();
+        
+        for (int k = N - 2; k >= 0; --k) {
+            Eigen::MatrixXd P_pred_next = history[k + 1].P_pred;
+            Eigen::MatrixXd F_next = history[k + 1].F;
+
+            Eigen::MatrixXd C = history[k].P_upd * F_next.transpose() * P_pred_next.inverse();
+
+            // Smooth state
+            history[k].x_upd = history[k].x_upd + C * (history[k + 1].x_upd - history[k + 1].x_pred);
+
+            // Smooth covariance
+            history[k].P_upd = history[k].P_upd + C * (history[k + 1].P_upd - P_pred_next) * C.transpose();
+        }
+
+        history.clear(); 
+    }
+
+    Eigen::MatrixXd calculateJacobian(State s, Input u) {
+        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(8, 8);
+        F(0, 4) = dt; F(1, 5) = dt; F(2, 6) = dt; F(3, 7) = dt; 
+
+        double speed = sqrt(pow(s.velocity.x, 2) + pow(s.velocity.y, 2));
+        F(0, 3) = -speed * sin(s.pose.theta) * dt;
+        F(1, 3) =  speed * cos(s.pose.theta) * dt;
+        return F;
+    }
+
+    Eigen::VectorXd stateToVec(const State& s) const {
+        Eigen::VectorXd vec(8);
+        vec << s.pose.x, s.pose.y, s.pose.z, s.pose.theta,
+               s.velocity.x, s.velocity.y, s.velocity.z, s.velocity.theta;
+        return vec;
+    }
+
+    State vecToState(const Eigen::VectorXd& vec) const {
+        State s;
+        s.pose.x = vec(0); s.pose.y = vec(1); s.pose.z = vec(2); s.pose.theta = vec(3);
+        s.velocity.x = vec(4); s.velocity.y = vec(5); s.velocity.z = vec(6); s.velocity.theta = vec(7);
+        return s;
+    }
 };
 
 #endif
