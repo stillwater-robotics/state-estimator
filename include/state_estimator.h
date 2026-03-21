@@ -1,10 +1,21 @@
+#ifdef ARDUINO
+#include <ArduinoEigen.h>
+#else
+#include <Eigen/Dense>
+#endif
+
+#ifdef ARDUINO
+#include "../../controller/include/controller.h"
+#else
+#include "controller.h"
+#endif
+
 #ifndef STATE_ESTIMATOR_HEADER
 #define STATE_ESTIMATOR_HEADER
 
-#include <Eigen/Dense>
 #include <vector>
 #include <cmath>
-#include "controller.h"
+
 
 // RTS smoother history storage
 struct HistoryNode {
@@ -12,7 +23,7 @@ struct HistoryNode {
     Eigen::MatrixXd P_pred;
     Eigen::VectorXd x_upd;
     Eigen::MatrixXd P_upd;
-    Eigen::MatrixXd F;
+    Eigen::MatrixXd F_matrix;
 };
 
 class StateEstimator {
@@ -56,15 +67,15 @@ public:
     void Predict(Input input) {
         prev_updated_state_vec = stateToVec(state);
 
-        Eigen::MatrixXd F = calculateJacobian(state, input);
+        Eigen::MatrixXd F_matrix = calculateJacobian(state, input);
         state = dynamics(state, input, dt);
-        P = F * P * F.transpose() + Q;
+        P = F_matrix * P * F_matrix.transpose() + Q;
 
         // RTS Smoother storage
         HistoryNode node;
         node.x_pred = stateToVec(state);
         node.P_pred = P;
-        node.F = F;
+        node.F_matrix = F_matrix;
         node.x_upd = node.x_pred;
         node.P_upd = node.P_pred;
         history.push_back(node);
@@ -178,7 +189,7 @@ private:
         
         for (int k = N - 2; k >= 0; --k) {
             Eigen::MatrixXd P_pred_next = history[k + 1].P_pred;
-            Eigen::MatrixXd F_next = history[k + 1].F;
+            Eigen::MatrixXd F_next = history[k + 1].F_matrix;
 
             Eigen::MatrixXd C = history[k].P_upd * F_next.transpose() * P_pred_next.inverse();
 
@@ -193,13 +204,13 @@ private:
     }
 
     Eigen::MatrixXd calculateJacobian(State s, Input u) {
-        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(8, 8);
-        F(0, 4) = dt; F(1, 5) = dt; F(2, 6) = dt; F(3, 7) = dt; 
+        Eigen::MatrixXd F_matrix = Eigen::MatrixXd::Identity(8, 8);
+        F_matrix(0, 4) = dt; F_matrix(1, 5) = dt; F_matrix(2, 6) = dt; F_matrix(3, 7) = dt; 
 
         double speed = sqrt(pow(s.velocity.x, 2) + pow(s.velocity.y, 2));
-        F(0, 3) = -speed * sin(s.pose.theta) * dt;
-        F(1, 3) =  speed * cos(s.pose.theta) * dt;
-        return F;
+        F_matrix(0, 3) = -speed * sin(s.pose.theta) * dt;
+        F_matrix(1, 3) =  speed * cos(s.pose.theta) * dt;
+        return F_matrix;
     }
 
     Eigen::VectorXd stateToVec(const State& s) const {
