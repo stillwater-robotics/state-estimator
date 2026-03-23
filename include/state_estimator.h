@@ -84,7 +84,7 @@ public:
     /**
      * @brief GPS Update: X and Y. Triggers RTS Smoother if surfaced.
      */
-    void UpdateGPS(double gps_x, double gps_y) {
+    void UpdateGPS(float gps_x, float gps_y) {
         if (state.pose.z > 0.5) return; 
 
         Eigen::MatrixXd H = Eigen::MatrixXd::Zero(2, 8);
@@ -109,7 +109,7 @@ public:
      * @brief IMU Update: XYZ Acceleration
      * a = (v_k - v_k-1) / dt
      */
-    void UpdateIMU(double ax, double ay, double az) {
+    void UpdateIMU(float ax, float ay, float az) {
         Eigen::MatrixXd H = Eigen::MatrixXd::Zero(3, 8);
         H(0, 4) = 1.0 / dt; // d(ax)/d(vx)
         H(1, 5) = 1.0 / dt; // d(ay)/d(vy)
@@ -130,7 +130,7 @@ public:
     /**
      * @brief Pressure Sensor Update: Z depth
      */
-    void UpdatePressure(double depth_z) {
+    void UpdatePressure(float depth_z) {
         Eigen::MatrixXd H = Eigen::MatrixXd::Zero(1, 8);
         H(0, 2) = 1.0;
 
@@ -207,7 +207,7 @@ private:
         Eigen::MatrixXd F_matrix = Eigen::MatrixXd::Identity(8, 8);
         F_matrix(0, 4) = dt; F_matrix(1, 5) = dt; F_matrix(2, 6) = dt; F_matrix(3, 7) = dt; 
 
-        double speed = sqrt(pow(s.velocity.x, 2) + pow(s.velocity.y, 2));
+        float speed = sqrt(pow(s.velocity.x, 2) + pow(s.velocity.y, 2));
         F_matrix(0, 3) = -speed * sin(s.pose.theta) * dt;
         F_matrix(1, 3) =  speed * cos(s.pose.theta) * dt;
         return F_matrix;
